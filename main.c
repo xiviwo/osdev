@@ -25,4 +25,3 @@ int main(struct multiboot *mboot_ptr)
   	u32int do_page_fault = *ptr;
   	return 0;
 
-}

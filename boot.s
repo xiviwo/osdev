@@ -1,45 +1,85 @@
+;*********************************************
+;	Boot1.asm
+;		- A Simple Bootloader
 ;
-; boot.s -- Kernel start location. Also defines multiboot header.
-; Based on Bran's kernel development tutorial file start.asm
-;
+;	Operating Systems Development Tutorial
+;*********************************************
 
-MBOOT_PAGE_ALIGN    equ 1<<0    ; Load kernel and modules on a page boundary
-MBOOT_MEM_INFO      equ 1<<1    ; Provide your kernel with memory info
-MBOOT_HEADER_MAGIC  equ 0x1BADB002 ; Multiboot Magic value
-; NOTE: We do not use MBOOT_AOUT_KLUDGE. It means that GRUB does not
-; pass us a symbol table.
-MBOOT_HEADER_FLAGS  equ MBOOT_PAGE_ALIGN | MBOOT_MEM_INFO
-MBOOT_CHECKSUM      equ -(MBOOT_HEADER_MAGIC + MBOOT_HEADER_FLAGS)
+bits	16							; We are still in 16 bit Real Mode
 
+org		0x7c00						; We are loaded by BIOS at 0x7C00
 
-[BITS 32]                       ; All instructions should be 32-bit.
+start:          jmp loader					; jump over OEM block
 
-[GLOBAL mboot]                  ; Make 'mboot' accessible from C.
-[EXTERN code]                   ; Start of the '.text' section.
-[EXTERN bss]                    ; Start of the .bss section.
-[EXTERN end]                    ; End of the last loadable section.
+;*************************************************;
+;	OEM Parameter block
+;*************************************************;
 
-mboot:
-  dd  MBOOT_HEADER_MAGIC        ; GRUB will search for this value on each
-                                ; 4-byte boundary in your kernel file
-  dd  MBOOT_HEADER_FLAGS        ; How GRUB should load your file / settings
-  dd  MBOOT_CHECKSUM            ; To ensure that the above values are correct
-   
-  dd  mboot                     ; Location of this descriptor
-  dd  code                      ; Start of kernel '.text' (code) section.
-  dd  bss                       ; End of kernel '.data' section.
-  dd  end                       ; End of kernel.
-  dd  start                     ; Kernel entry point (initial EIP).
+; Error Fix 2 - Removing the ugly TIMES directive -------------------------------------
 
-[GLOBAL start]                  ; Kernel entry point.
-[EXTERN main]                   ; This is the entry point of our C code
+;;	TIMES 0Bh-$+start DB 0					; The OEM Parameter Block is exactally 3 bytes
+								; from where we are loaded at. This fills in those
+								; 3 bytes, along with 8 more. Why?
 
-start:
-  push    ebx                   ; Load multiboot header location
+bpbOEM			db "My OS   "				; This member must be exactally 8 bytes. It is just
+								; the name of your OS :) Everything else remains the same.
 
-  ; Execute the kernel:
-  cli                         ; Disable interrupts.
-  call main                   ; call our main() function.
-  jmp $                       ; Enter an infinite loop, to stop the processor
-                              ; executing whatever rubbish is in the memory
-                              ; after our kernel!
+bpbBytesPerSector:  	DW 512
+bpbSectorsPerCluster: 	DB 1
+bpbReservedSectors: 	DW 1
+bpbNumberOfFATs: 	    DB 2
+bpbRootEntries: 	    DW 224
+bpbTotalSectors: 	    DW 2880
+bpbMedia: 	            DB 0xF0
+bpbSectorsPerFAT: 	    DW 9
+bpbSectorsPerTrack: 	DW 18
+bpbHeadsPerCylinder: 	DW 2
+bpbHiddenSectors: 	    DD 0
+bpbTotalSectorsBig:     DD 0
+bsDriveNumber: 	        DB 0
+bsUnused: 	            DB 0
+bsExtBootSignature: 	DB 0x29
+bsSerialNumber:	        DD 0xa0a1a2a3
+bsVolumeLabel: 	        DB "MOS FLOPPY "
+bsFileSystem: 	        DB "FAT12   "
+
+msg	db	"Welcome to My Operating System!", 0		; the string to print
+
+;***************************************
+;	Prints a string
+;	DS=>SI: 0 terminated string
+;***************************************
+
+Print:
+			lodsb					; load next byte from string from SI to AL
+			or			al, al		; Does AL=0?
+			jz			PrintDone	; Yep, null terminator found-bail out
+			mov			ah,	0eh	; Nope-Print the character
+			int			10h
+			jmp			Print		; Repeat until null terminator found
+PrintDone:
+			ret					; we are done, so return
+
+;*************************************************;
+;	Bootloader Entry Point
+;*************************************************;
+
+loader:
+
+	xor	ax, ax		; Setup segments to insure they are 0. Remember that
+	mov	ds, ax		; we have ORG 0x7c00. This means all addresses are based
+	mov	es, ax		; from 0x7c00:0. Because the data segments are within the same
+				; code segment, null em.
+
+	mov	si, msg						; our message to print
+	call	Print						; call our print function
+
+	xor	ax, ax						; clear ax
+	int	0x12						; get the amount of KB from the BIOS
+
+	cli							; Clear all Interrupts
+	hlt							; halt the system
+	
+times 510 - ($-$$) db 0						; We have to be 512 bytes. Clear the rest of the bytes with 0
+
+dw 0xAA55							; Boot Signiture
